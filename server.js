@@ -5,24 +5,37 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cookie: true
-});
+const io = new Server(server, { cookie: true });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use((req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-const WORDS = [
-  'Beach','Airport','Bank','Hospital','Hotel','Library','Museum','Restaurant',
-  'School','Supermarket','Zoo','Cinema','Gym','Police Station','Train Station',
-  'Casino','Farm','Space Station','Submarine','Pirate Ship','Medieval Castle',
-  'Circus','Embassy','Military Base','Cruise Ship','Spa','Cathedral','Stadium',
-  'Prison','Vineyard','Antarctic Base','Amusement Park','Volcano','Jungle',
-  'Ski Resort','Chocolate Factory','Haunted House','Underwater Lab','Desert Island'
-];
+const WORDS = {
+  en: [
+    'Beach','Airport','Bank','Hospital','Hotel','Library','Museum','Restaurant',
+    'School','Supermarket','Zoo','Cinema','Gym','Police Station','Train Station',
+    'Casino','Farm','Space Station','Submarine','Pirate Ship','Medieval Castle',
+    'Circus','Embassy','Military Base','Cruise Ship','Spa','Cathedral','Stadium',
+    'Prison','Vineyard','Antarctic Base','Amusement Park','Volcano','Jungle',
+    'Ski Resort','Chocolate Factory','Haunted House','Underwater Lab','Desert Island'
+  ],
+  es: [
+    'Playa','Aeropuerto','Banco','Hospital','Hotel','Biblioteca','Museo','Restaurante',
+    'Escuela','Supermercado','Zoológico','Cine','Gimnasio','Comisaría','Estación de Tren',
+    'Casino','Granja','Estación Espacial','Submarino','Barco Pirata','Castillo Medieval',
+    'Circo','Embajada','Base Militar','Crucero','Spa','Catedral','Estadio',
+    'Prisión','Viñedo','Base Antártica','Parque de Atracciones','Volcán','Jungla',
+    'Resort de Esquí','Fábrica de Chocolate','Casa Encantada','Laboratorio Submarino','Isla Desierta'
+  ],
+  fr: [
+    'Plage','Aéroport','Banque','Hôpital','Hôtel','Bibliothèque','Musée','Restaurant',
+    'École','Supermarché','Zoo','Cinéma','Salle de Sport','Commissariat','Gare',
+    'Casino','Ferme','Station Spatiale','Sous-marin','Bateau Pirate','Château Médiéval',
+    'Cirque','Ambassade','Base Militaire','Croisière','Spa','Cathédrale','Stade',
+    'Prison','Vignoble','Base Antarctique','Parc d\'Attractions','Volcan','Jungle',
+    'Station de Ski','Chocolaterie','Maison Hantée','Laboratoire Sous-marin','Île Déserte'
+  ]
+};
 
 const rooms = {};
 
@@ -37,16 +50,18 @@ function broadcastRoom(code) {
   io.to(code).emit('room-update', {
     code,
     players: room.players.map(p => p.name),
-    started: room.started
+    started: room.started,
+    lang: room.lang
   });
 }
 
 io.on('connection', (socket) => {
 
-  socket.on('create-room', () => {
+  socket.on('create-room', ({ lang } = {}) => {
     let code;
     do { code = randomCode(); } while (rooms[code]);
-    rooms[code] = { players: [], started: false };
+    const validLang = ['en', 'es', 'fr'].includes(lang) ? lang : 'en';
+    rooms[code] = { players: [], started: false, lang: validLang };
     socket.emit('room-created', { code });
   });
 
@@ -56,14 +71,8 @@ io.on('connection', (socket) => {
     if (!name || !code) return;
 
     const room = rooms[code];
-    if (!room) {
-      socket.emit('error-msg', 'Room not found.');
-      return;
-    }
-    if (room.started) {
-      socket.emit('error-msg', 'Game already started.');
-      return;
-    }
+    if (!room) { socket.emit('error-msg', 'Room not found.'); return; }
+    if (room.started) { socket.emit('error-msg', 'Game already started.'); return; }
     if (room.players.find(p => p.id === socket.id)) return;
 
     socket.join(code);
@@ -78,17 +87,12 @@ io.on('connection', (socket) => {
     if (!code) return;
     const room = rooms[code];
     if (!room || room.started) return;
-    if (room.players.length < 2) {
-      socket.emit('error-msg', 'Need at least 2 players.');
-      return;
-    }
-    if (room.players[0].id !== socket.id) {
-      socket.emit('error-msg', 'Only the host can start.');
-      return;
-    }
+    if (room.players.length < 2) { socket.emit('error-msg', 'Need at least 2 players.'); return; }
+    if (room.players[0].id !== socket.id) { socket.emit('error-msg', 'Only the host can start.'); return; }
 
     room.started = true;
-    const word = WORDS[Math.floor(Math.random() * WORDS.length)];
+    const list = WORDS[room.lang] || WORDS.en;
+    const word = list[Math.floor(Math.random() * list.length)];
     const impostorIndex = Math.floor(Math.random() * room.players.length);
 
     room.players.forEach((player, i) => {
@@ -116,11 +120,8 @@ io.on('connection', (socket) => {
     const code = socket.data.roomCode;
     if (!code || !rooms[code]) return;
     rooms[code].players = rooms[code].players.filter(p => p.id !== socket.id);
-    if (rooms[code].players.length === 0) {
-      delete rooms[code];
-    } else {
-      broadcastRoom(code);
-    }
+    if (rooms[code].players.length === 0) delete rooms[code];
+    else broadcastRoom(code);
   });
 });
 
@@ -134,7 +135,5 @@ server.listen(PORT, '0.0.0.0', () => {
       if (net.family === 'IPv4' && !net.internal) { localIP = net.address; break; }
     }
   }
-  console.log(`Server running:`);
-  console.log(`  Local:   http://localhost:${PORT}`);
-  console.log(`  Network: http://${localIP}:${PORT}`);
+  console.log(`Server running:\n  Local:   http://localhost:${PORT}\n  Network: http://${localIP}:${PORT}`);
 });
